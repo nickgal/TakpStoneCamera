@@ -19,21 +19,25 @@ const uintptr_t EQ_OFFSET_EQGfx_Dx8_g_bForceClear = 0x637874;
 
 const uintptr_t LoadGfxDLL_Addr = 0x0054999c;
 
+// --- Global Caches ---
+HMODULE g_hGfxDll = nullptr;
+volatile int* g_pForceClear = nullptr;
+
 // --- Helper Functions ---
 bool EQ_IsInGame() {
-    uintptr_t cEverQuest = *(uintptr_t*)EQ_POINTER_CEverQuest;
-    if (!cEverQuest) return false;
-    return *(uint32_t*)(cEverQuest + EQ_OFFSET_CEverQuest_GAMESTATE) == EQ_GAME_STATE_IN_GAME;
+    uintptr_t cEverQuest = *(volatile uintptr_t*)EQ_POINTER_CEverQuest;
+    if (!cEverQuest || IsBadReadPtr((void*)cEverQuest, sizeof(uintptr_t))) return false;
+    return *(volatile uint32_t*)(cEverQuest + EQ_OFFSET_CEverQuest_GAMESTATE) == EQ_GAME_STATE_IN_GAME;
 }
 
 bool EQ_IsClassicUI() {
-    return *(uint8_t*)g_bNewUI == 0 && *(uint8_t*)EQ_UI_STATE == EQ_UI_STATE_CLASSIC;
+    return *(volatile uint8_t*)g_bNewUI == 0 && *(volatile uint8_t*)EQ_UI_STATE == EQ_UI_STATE_CLASSIC;
 }
 
 bool EQ_IsInventoryOpen() {
-    uintptr_t eqMain = *(uintptr_t*)EQ_POINTER_EQ_Main;
-    if (!eqMain) return false;
-    return *(uint32_t*)(eqMain + EQ_OFFSET_EQ_Main_IS_INVENTORY_OPEN) == 1;
+    uintptr_t eqMain = *(volatile uintptr_t*)EQ_POINTER_EQ_Main;
+    if (!eqMain || IsBadReadPtr((void*)eqMain, sizeof(uintptr_t))) return false;
+    return *(volatile uint32_t*)(eqMain + EQ_OFFSET_EQ_Main_IS_INVENTORY_OPEN) == 1;
 }
 
 // --- Hooking t3dSetCameraRenderWindow ---
@@ -44,21 +48,22 @@ void __cdecl Hooked_t3dSetCameraRenderWindow(void* arg1, void* arg2, void* arg3)
     // Call original function
     fpT3dSetCameraRenderWindow(arg1, arg2, arg3);
 
-    HMODULE hGfxDll = GetModuleHandleA("eqgfx_dx8.dll");
-    if (hGfxDll) {
-        int* g_bForceClear = (int*)((uintptr_t)hGfxDll + EQ_OFFSET_EQGfx_Dx8_g_bForceClear);
-
-        if (EQ_IsInGame() && EQ_IsClassicUI() && EQ_IsInventoryOpen() && *g_bForceClear == 1) {
-            *g_bForceClear = 0;
+    if (g_pForceClear && *g_pForceClear == 1) {
+        if (EQ_IsInGame() && EQ_IsClassicUI() && EQ_IsInventoryOpen()) {
+            *g_pForceClear = 0;
         }
     }
 }
 
 void FixInvCamera() {
-    HMODULE hGfxDll = GetModuleHandleA("eqgfx_dx8.dll");
-    if (!hGfxDll) return;
+    if (g_hGfxDll) return;
 
-    void* t3dSetCameraRenderWindow = (void*)GetProcAddress(hGfxDll, "t3dSetCameraRenderWindow");
+    g_hGfxDll = GetModuleHandleA("eqgfx_dx8.dll");
+    if (!g_hGfxDll) return;
+
+    g_pForceClear = (int*)((uintptr_t)g_hGfxDll + EQ_OFFSET_EQGfx_Dx8_g_bForceClear);
+
+    void* t3dSetCameraRenderWindow = (void*)GetProcAddress(g_hGfxDll, "t3dSetCameraRenderWindow");
     if (!t3dSetCameraRenderWindow) return;
 
     // Create MinHook for the exported function
